@@ -1,0 +1,31 @@
+name: build-plugin
+on: [workflow_dispatch, push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          apt-get update
+          apt-get install -y git cmake ninja-build python3 python3-pip
+          pip3 install --break-system-packages keystone-engine lz4 || pip3 install keystone-engine lz4
+      - name: Fetch exlaunch and overlay our code
+        run: |
+          git clone --depth 1 https://github.com/shadowninja108/exlaunch.git
+          cp src/program/main.cpp exlaunch/src/program/main.cpp
+          # Library of Ruina title ID (from your main.npdm)
+          grep -rl "PROGRAM_ID" exlaunch/config 2>/dev/null | xargs -r sed -i -E 's/(PROGRAM_ID[ ]+)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
+      - name: Build
+        working-directory: exlaunch
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake
+          cmake --build build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin
+          path: |
+            exlaunch/deploy/**
+            exlaunch/build/**/subsdk*
+            exlaunch/build/**/main.npdm
