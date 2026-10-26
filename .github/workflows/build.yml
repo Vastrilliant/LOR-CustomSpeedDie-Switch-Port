@@ -9,27 +9,39 @@ jobs:
       - name: Tools
         run: |
           apt-get update
-          apt-get install -y git cmake ninja-build python3 python3-pip
+          apt-get install -y git cmake ninja-build make python3 python3-pip
           pip3 install --break-system-packages keystone-engine lz4 || pip3 install keystone-engine lz4
       - name: Fetch exlaunch and overlay our code
         run: |
           git clone --depth 1 https://github.com/shadowninja108/exlaunch.git
-          ls exlaunch
+          echo "=== repo top level ==="; ls -la exlaunch
+          echo "=== build files ==="; find exlaunch -maxdepth 3 \( -name CMakeLists.txt -o -name Makefile -o -name '*.cmake' -o -name '*.json' \) -not -path '*/.git/*'
           TARGET=$(find exlaunch -path '*program/main.cpp' | head -n1)
           echo "overlaying $TARGET"
           test -n "$TARGET"
           cp src/program/main.cpp "$TARGET"
           # Library of Ruina title ID (from your main.npdm)
-          grep -rl "PROGRAM_ID" exlaunch/config 2>/dev/null | xargs -r sed -i -E 's/(PROGRAM_ID[ ]+)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
+          grep -rIl "PROGRAM_ID" exlaunch --exclude-dir=.git | head -20 | xargs -r sed -i -E 's/(PROGRAM_ID[ :=]+"?)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
       - name: Build
-        working-directory: exlaunch
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake
-          cmake --build build
+          set -x
+          ROOT=$(dirname "$(find exlaunch -name CMakeLists.txt -not -path '*/.git/*' | awk '{print length, $0}' | sort -n | head -n1 | cut -d' ' -f2-)" 2>/dev/null || true)
+          if [ -n "$ROOT" ] && [ -f "$ROOT/CMakeLists.txt" ]; then
+            cd "$ROOT"
+            TC=$(find . -name 'toolchain*.cmake' | head -n1)
+            cmake -S . -B build -G Ninja ${TC:+-DCMAKE_TOOLCHAIN_FILE=$TC}
+            cmake --build build
+          elif [ -f exlaunch/Makefile ]; then
+            make -C exlaunch -j"$(nproc)"
+          else
+            echo "No CMakeLists.txt or Makefile found - see the listing above"; exit 1
+          fi
+      - name: Collect outputs
+        run: |
+          mkdir -p out
+          find exlaunch \( -name 'subsdk*' -o -name 'main.npdm' -o -name '*.nso' \) -type f -not -path '*/.git/*' -exec cp -v {} out/ \;
+          ls -la out
       - uses: actions/upload-artifact@v4
         with:
           name: plugin
-          path: |
-            exlaunch/deploy/**
-            exlaunch/build/**/subsdk*
-            exlaunch/build/**/main.npdm
+          path: out/**
