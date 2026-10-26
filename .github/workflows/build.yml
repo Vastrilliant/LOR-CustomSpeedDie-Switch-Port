@@ -14,7 +14,11 @@ jobs:
       - name: Fetch exlaunch and overlay our code
         run: |
           git clone --depth 1 https://github.com/shadowninja108/exlaunch.git
-          cp src/program/main.cpp exlaunch/src/program/main.cpp
+          ls exlaunch
+          TARGET=$(find exlaunch -path '*program/main.cpp' | head -n1)
+          echo "overlaying $TARGET"
+          test -n "$TARGET"
+          cp src/program/main.cpp "$TARGET"
           # Library of Ruina title ID (from your main.npdm)
           grep -rl "PROGRAM_ID" exlaunch/config 2>/dev/null | xargs -r sed -i -E 's/(PROGRAM_ID[ ]+)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
       - name: Build
