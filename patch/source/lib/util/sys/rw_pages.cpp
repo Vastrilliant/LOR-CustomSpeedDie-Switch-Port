@@ -89,7 +89,20 @@ namespace exl::util {
             Logging.Log(EXL_LOG_PREFIX "rw bytes: %02x %02x %02x %02x %02x %02x %02x %02x",
                 ByteAt(rwBytes, first, size), ByteAt(rwBytes, first+1, size), ByteAt(rwBytes, first+2, size), ByteAt(rwBytes, first+3, size), ByteAt(rwBytes, first+4, size), ByteAt(rwBytes, first+5, size), ByteAt(rwBytes, first+6, size), ByteAt(rwBytes, first+7, size));
         }
-        EXL_ASSERT(same);
+        if(!same) {
+            ForEachMemRange(
+                [alignedRw, procHandle](uintptr_t address, uintptr_t size, uintptr_t offset) {
+                    void* rw = (void*) (alignedRw + offset);
+                    R_ABORT_UNLESS(svcUnmapProcessMemory(rw, procHandle, address, size));
+                }
+            , claim.GetAlignedRo(), claim.GetAlignedSize());
+
+            virtmemRemoveReservation(reserve);
+            m_Claim.m_RwReserve = nullptr;
+            m_Claim.m_Rw = ro;
+
+            Logging.Log(EXL_LOG_PREFIX "RW alias is not coherent, using direct writes at %016lx", (unsigned long) ro);
+        }
     }
 
     void RwPages::Flush() const {
@@ -107,6 +120,9 @@ namespace exl::util {
         /* Flush data. */
         armDCacheFlush((void*)claim.m_Rw, claim.m_Size);
         armICacheInvalidate((void*)claim.m_Ro, claim.m_Size);
+
+        if(claim.m_RwReserve == nullptr)
+            return;
 
         auto procHandle = proc_handle::Get();
         
