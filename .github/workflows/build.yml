@@ -19,55 +19,35 @@ jobs:
           test -n "$TARGET"
           echo "TARGET=$TARGET" >> "$GITHUB_ENV"
           grep -rIl "PROGRAM_ID" exlaunch --exclude-dir=.git | head -20 | xargs -r sed -i -E 's/(PROGRAM_ID[ :=]+"?)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
-      - name: Write variant sources
+      - name: Apply fixes
         run: |
-          mkdir -p variants
-          cat > variants/empty.cpp <<'CPP'
-          extern "C" void exl_main(void* x0, void* x1) { (void)x0; (void)x1; }
-          extern "C" void exl_exception_entry() { while (true) {} }
-          CPP
-          cat > variants/svc.cpp <<'CPP'
-          #include <cstddef>
-          static void dbg(const char* s) {
-              size_t n = 0;
-              while (s[n]) ++n;
-              register const char* x0 asm("x0") = s;
-              register size_t x1 asm("x1") = n;
-              asm volatile("svc #0x27" : "+r"(x0) : "r"(x1) : "memory");
-          }
-          extern "C" void exl_main(void* x0, void* x1) {
-              (void)x0; (void)x1;
-              dbg("[LoRSpeedDice] plugin loaded OK (stage 0)");
-          }
-          extern "C" void exl_exception_entry() { while (true) {} }
-          CPP
-      - name: Build variants
+          test -d patch/source
+          cp -rv patch/source/. exlaunch/source/
+          cp -v src/program/main.cpp "$TARGET"
+      - name: Build
         run: |
           set -x
           CM=$(find exlaunch -name CMakeLists.txt -not -path '*/.git/*' | awk '{print length, $0}' | sort -n | head -n1 | cut -d' ' -f2-)
-          for V in empty svc; do
-            cp "variants/$V.cpp" "$TARGET"
-            find exlaunch -name 'subsdk*' -type f -delete
-            rm -rf exlaunch/build
-            if [ -n "$CM" ]; then
-              ROOT=$(dirname "$CM")
-              ( cd "$ROOT"
-                TC=$(find . -name 'toolchain*.cmake' | head -n1)
-                cmake -S . -B build -G Ninja ${TC:+-DCMAKE_TOOLCHAIN_FILE=$TC}
-                cmake --build build )
-            elif [ -f exlaunch/Makefile ]; then
-              make -C exlaunch clean || true
-              make -C exlaunch -j"$(nproc)"
-            else
-              echo "No CMakeLists.txt or Makefile found"; exit 1
-            fi
-            mkdir -p "out/$V"
-            find exlaunch -name 'subsdk9' -type f -exec cp -v {} "out/$V/subsdk9" \;
-          done
+          find exlaunch -name 'subsdk*' -type f -delete
+          rm -rf exlaunch/build
+          if [ -n "$CM" ]; then
+            ROOT=$(dirname "$CM")
+            ( cd "$ROOT"
+              TC=$(find . -name 'toolchain*.cmake' | head -n1)
+              cmake -S . -B build -G Ninja ${TC:+-DCMAKE_TOOLCHAIN_FILE=$TC}
+              cmake --build build )
+          elif [ -f exlaunch/Makefile ]; then
+            make -C exlaunch clean || true
+            make -C exlaunch -j"$(nproc)"
+          else
+            echo "No CMakeLists.txt or Makefile found"; exit 1
+          fi
+          mkdir -p out
+          find exlaunch -name 'subsdk9' -type f -exec cp -v {} out/subsdk9 \;
           ls -laR out
       - uses: actions/upload-artifact@v4
         with:
-          name: plugin-variants
+          name: subsdk9
           path: out/**
       - uses: actions/upload-artifact@v4
         if: always()
