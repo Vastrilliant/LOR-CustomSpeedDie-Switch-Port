@@ -94,7 +94,7 @@ namespace {
         if(s_State != LoadState::Loaded)
             return;
 
-        void* sprite = Fn<void*(GcHandle, const void*)>(kGcHandleGetTarget)(s_Handle, nullptr);
+        void* sprite = Fn<void*(GcHandle*, const void*)>(kGcHandleGetTarget)(&s_Handle, nullptr);
         if(sprite == nullptr)
             return;
 
