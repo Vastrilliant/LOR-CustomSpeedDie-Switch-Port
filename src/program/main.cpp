@@ -5,6 +5,7 @@
 #include <program/loggers.hpp>
 #include <stdio.h>
 #include <string.h>
+#include "speeddice_rules.hpp"
 
 namespace {
     constexpr uintptr_t kSpeedDiceUiInit = 0x233BF20;
@@ -46,8 +47,57 @@ namespace {
     constexpr uintptr_t kFileExists = 0x2045D00;
     constexpr uintptr_t kGcHandleAlloc = 0x20EDF30;
     constexpr uintptr_t kGcHandleGetTarget = 0x20EDD10;
+    constexpr uintptr_t kGcHandleFree = 0x20EE000;
 
-    constexpr int kFactionPlayer = 1;
+    constexpr uintptr_t kStageControllerInitCommon = 0x1CFAAD0;
+    constexpr uintptr_t kStageControllerStartBattle = 0x1CFBF10;
+    constexpr uintptr_t kStageControllerApplyLibrarianCardPhase = 0x1D06410;
+    constexpr uintptr_t kStageClassInfoGetId = 0x1A41830;
+    constexpr uintptr_t kStageClassInfoGetStoryType = 0x1A53550;
+    constexpr uintptr_t kSpecialStageIdsIsBlueBand = 0x1A534C0;
+    constexpr uintptr_t kSpecialStageIdsIsKeterFinal = 0x1A534E0;
+    constexpr uintptr_t kLorIdOpEqualityInt = 0x1DA4280;
+    constexpr uintptr_t kBattleUnitModelGetUnitData = 0x1EEF510;
+    constexpr uintptr_t kBattleUnitModelIsBreakLifeZero = 0x1EF0990;
+    constexpr uintptr_t kUnitDataModelGetDefaultBook = 0x1D26D40;
+    constexpr uintptr_t kUnitDataModelGetEnemyUnitId = 0x1D26F70;
+    constexpr uintptr_t kBookModelGetBookClassInfoId = 0x20AC560;
+    constexpr uintptr_t kBufListDetailHasAssimilation = 0x1B3E2F0;
+    constexpr uintptr_t kBattleUnitBufIsDestroyed = 0x1E25390;
+    constexpr uintptr_t kBattleDiceCardModelGetId = 0x2446BE0;
+    constexpr uintptr_t kBattleObjectManagerGetInstance = 0x28807A0;
+    constexpr uintptr_t kBattleObjectManagerGetAliveListFaction = 0x2885570;
+    constexpr uintptr_t kSpeedDiceSetterGetSpeedDiceByIndex = 0x233B5B0;
+
+    constexpr uintptr_t kFieldView = 0x98;
+    constexpr uintptr_t kViewModel = 0x28;
+    constexpr uintptr_t kModelView = 0x50;
+    constexpr uintptr_t kViewSpeedDiceSetter = 0x1C0;
+    constexpr uintptr_t kModelCardSlotDetail = 0x100;
+    constexpr uintptr_t kModelBufListDetail = 0x108;
+    constexpr uintptr_t kModelPassiveDetail = 0x128;
+    constexpr uintptr_t kCardSlotDetailCardAry = 0x30;
+    constexpr uintptr_t kPlayingCardCard = 0x28;
+    constexpr uintptr_t kBufListDetailBufList = 0x18;
+    constexpr uintptr_t kPassiveDetailPassiveList = 0x18;
+    constexpr uintptr_t kPassiveAbilityDestroyed = 0x18;
+    constexpr uintptr_t kUnitBattleDataUnitData = 0x10;
+    constexpr uintptr_t kUnitDataIsSephirah = 0xB8;
+    constexpr uintptr_t kStageControllerStageType = 0x18;
+    constexpr uintptr_t kStageControllerCurrentFloor = 0x20;
+    constexpr uintptr_t kStageControllerCurrentWave = 0x24;
+    constexpr uintptr_t kStageControllerStageModel = 0x10;
+    constexpr uintptr_t kStageModelClassInfo = 0x10;
+    constexpr uintptr_t kStageClassInfoChapter = 0x48;
+    constexpr uintptr_t kLorIdId = 0x10;
+    constexpr uintptr_t kListItems = 0x10;
+    constexpr uintptr_t kListSize = 0x18;
+    constexpr uintptr_t kArrayData = 0x20;
+    constexpr uintptr_t kClassName = 0x10;
+    constexpr uintptr_t kClassParent = 0x58;
+    constexpr uintptr_t kStringLength = 0x10;
+    constexpr uintptr_t kStringChars = 0x14;
+
     constexpr int kInfiniteThreshold = 999;
     constexpr int kMaxBase = 256;
     constexpr int kMaxScaled = 512;
@@ -76,6 +126,9 @@ namespace {
     ScaledEntry s_Scaled[kMaxScaled];
     int s_ScaledCount = 0;
     int s_LogBudget = 40;
+    GcHandle s_StageHandle;
+    bool s_StageHandleValid = false;
+    void* s_StageRaw = nullptr;
 
     template<typename Sig>
     Sig* Fn(uintptr_t rva) {
@@ -83,7 +136,21 @@ namespace {
     }
 
     inline void* Field(void* self, uintptr_t off) {
+        if(self == nullptr)
+            return nullptr;
         return *reinterpret_cast<void* const*>(reinterpret_cast<uintptr_t>(self) + off);
+    }
+
+    inline int FieldInt(void* self, uintptr_t off) {
+        if(self == nullptr)
+            return 0;
+        return *reinterpret_cast<const int*>(reinterpret_cast<uintptr_t>(self) + off);
+    }
+
+    inline bool FieldBool(void* self, uintptr_t off) {
+        if(self == nullptr)
+            return false;
+        return *reinterpret_cast<const uint8_t*>(reinterpret_cast<uintptr_t>(self) + off) != 0;
     }
 
     void* Deref(GcHandle& h) {
@@ -233,11 +300,282 @@ namespace {
         SetGraphicColor(Field(ui, kFieldBreakedLinearDodge), dim);
     }
 
-    void ApplyDefault(void* ui, int faction) {
-        if(faction == kFactionPlayer)
-            ChangeSpeedDiceColor("Hokma", nullptr, Color{ 0.7f, 0.7f, 0.7f, 1.0f }, ui);
-        else
-            ChangeSpeedDiceColor("Abnormalities", nullptr, Color{ 0.7f, 0.5f, 0.4f, 1.0f }, ui);
+    bool StringEquals(void* str, const char* ascii) {
+        if(str == nullptr)
+            return false;
+        const int length = FieldInt(str, kStringLength);
+        const char16_t* chars = reinterpret_cast<const char16_t*>(reinterpret_cast<uintptr_t>(str) + kStringChars);
+        int i = 0;
+        for(; ascii[i] != 0; i++) {
+            if(i >= length || chars[i] != static_cast<char16_t>(static_cast<unsigned char>(ascii[i])))
+                return false;
+        }
+        return i == length;
+    }
+
+    int ListCount(void* list) {
+        return FieldInt(list, kListSize);
+    }
+
+    void* ListAt(void* list, int index) {
+        if(list == nullptr || index < 0 || index >= ListCount(list))
+            return nullptr;
+        void* items = Field(list, kListItems);
+        if(items == nullptr)
+            return nullptr;
+        return *reinterpret_cast<void* const*>(reinterpret_cast<uintptr_t>(items) + kArrayData + sizeof(void*) * static_cast<size_t>(index));
+    }
+
+    bool IsInstanceOf(void* obj, const char* className) {
+        if(obj == nullptr)
+            return false;
+        void* klass = *reinterpret_cast<void* const*>(obj);
+        for(; klass != nullptr; klass = Field(klass, kClassParent)) {
+            const char* name = *reinterpret_cast<const char* const*>(reinterpret_cast<uintptr_t>(klass) + kClassName);
+            if(name != nullptr && strcmp(name, className) == 0)
+                return true;
+        }
+        return false;
+    }
+
+    bool LorIdIs(void* lorId, int value) {
+        if(lorId == nullptr)
+            return false;
+        return Fn<bool(void*, int, const void*)>(kLorIdOpEqualityInt)(lorId, value, nullptr);
+    }
+
+    void* UnitDataOf(void* model) {
+        if(model == nullptr)
+            return nullptr;
+        void* battleData = Fn<void*(void*, const void*)>(kBattleUnitModelGetUnitData)(model, nullptr);
+        return Field(battleData, kUnitBattleDataUnitData);
+    }
+
+    bool EnemyUnitIdIs(void* unit, int value) {
+        void* unitData = UnitDataOf(unit);
+        if(unitData == nullptr)
+            return false;
+        return LorIdIs(Fn<void*(void*, const void*)>(kUnitDataModelGetEnemyUnitId)(unitData, nullptr), value);
+    }
+
+    void* StoryTypeOf(void* stage) {
+        void* classInfo = Field(Field(stage, kStageControllerStageModel), kStageModelClassInfo);
+        if(classInfo == nullptr)
+            return nullptr;
+        return Fn<void*(void*, const void*)>(kStageClassInfoGetStoryType)(classInfo, nullptr);
+    }
+
+    void* CurrentStage() {
+        if(!s_StageHandleValid)
+            return nullptr;
+        return Deref(s_StageHandle);
+    }
+
+    void CacheStage(void* stage) {
+        if(stage == nullptr || (s_StageHandleValid && stage == s_StageRaw))
+            return;
+        if(s_StageHandleValid)
+            Fn<void(GcHandle*, const void*)>(kGcHandleFree)(&s_StageHandle, nullptr);
+        s_StageHandle = Fn<GcHandle(void*, const void*)>(kGcHandleAlloc)(stage, nullptr);
+        s_StageHandleValid = true;
+        s_StageRaw = stage;
+    }
+
+    struct GameEnv {
+        void* ui;
+        int factionValue;
+        void* stage;
+        void* classInfo;
+        void* model;
+        void* unitData;
+        void* story;
+        bool storyFetched;
+
+        GameEnv(void* uiIn, int faction, void* stageIn)
+            : ui(uiIn), factionValue(faction), stage(stageIn), story(nullptr), storyFetched(false) {
+            classInfo = Field(Field(stage, kStageControllerStageModel), kStageModelClassInfo);
+            model = Field(Field(ui, kFieldView), kViewModel);
+            unitData = UnitDataOf(model);
+        }
+
+        void* stageId() {
+            if(classInfo == nullptr)
+                return nullptr;
+            return Fn<void*(void*, const void*)>(kStageClassInfoGetId)(classInfo, nullptr);
+        }
+
+        void* defaultBook() {
+            if(unitData == nullptr)
+                return nullptr;
+            return Fn<void*(void*, const void*)>(kUnitDataModelGetDefaultBook)(unitData, nullptr);
+        }
+
+        int faction() { return factionValue; }
+        int wave() { return FieldInt(stage, kStageControllerCurrentWave); }
+        int floor() { return FieldInt(stage, kStageControllerCurrentFloor); }
+        int stageType() { return FieldInt(stage, kStageControllerStageType); }
+        int chapter() { return FieldInt(classInfo, kStageClassInfoChapter); }
+        int stageIdValue() { return FieldInt(stageId(), kLorIdId); }
+        bool stageIdIs(int value) { return LorIdIs(stageId(), value); }
+
+        bool keterFinal() {
+            void* id = stageId();
+            if(id == nullptr)
+                return false;
+            return Fn<bool(void*, const void*)>(kSpecialStageIdsIsKeterFinal)(id, nullptr);
+        }
+
+        bool blueBand(int id) {
+            return Fn<bool(int, const void*)>(kSpecialStageIdsIsBlueBand)(id, nullptr);
+        }
+
+        bool storyIs(const char* value) {
+            if(!storyFetched) {
+                story = StoryTypeOf(stage);
+                storyFetched = true;
+            }
+            return StringEquals(story, value);
+        }
+
+        bool hasAssimilation() {
+            void* bufs = Field(model, kModelBufListDetail);
+            if(bufs == nullptr)
+                return false;
+            return Fn<bool(void*, const void*)>(kBufListDetailHasAssimilation)(bufs, nullptr);
+        }
+
+        bool hasBuf(const char* className) {
+            void* list = Field(Field(model, kModelBufListDetail), kBufListDetailBufList);
+            const int count = ListCount(list);
+            for(int i = 0; i < count; i++) {
+                void* buf = ListAt(list, i);
+                if(buf == nullptr || !IsInstanceOf(buf, className))
+                    continue;
+                if(!Fn<bool(void*, const void*)>(kBattleUnitBufIsDestroyed)(buf, nullptr))
+                    return true;
+            }
+            return false;
+        }
+
+        bool hasPassive(const char* className) {
+            void* list = Field(Field(model, kModelPassiveDetail), kPassiveDetailPassiveList);
+            const int count = ListCount(list);
+            for(int i = 0; i < count; i++) {
+                void* passive = ListAt(list, i);
+                if(passive == nullptr || !IsInstanceOf(passive, className))
+                    continue;
+                if(!FieldBool(passive, kPassiveAbilityDestroyed))
+                    return true;
+            }
+            return false;
+        }
+
+        bool isSephirah() { return FieldBool(unitData, kUnitDataIsSephirah); }
+        bool bookValid() { return defaultBook() != nullptr; }
+
+        bool defaultBookIs(int value) {
+            void* book = defaultBook();
+            if(book == nullptr)
+                return false;
+            return LorIdIs(Fn<void*(void*, const void*)>(kBookModelGetBookClassInfoId)(book, nullptr), value);
+        }
+
+        bool enemyUnitIs(int value) {
+            if(unitData == nullptr)
+                return false;
+            return LorIdIs(Fn<void*(void*, const void*)>(kUnitDataModelGetEnemyUnitId)(unitData, nullptr), value);
+        }
+    };
+
+    void ApplyDiceStyle(void* ui, int faction) {
+        if(ui == nullptr)
+            return;
+        void* stage = CurrentStage();
+        if(stage == nullptr) {
+            if(s_LogBudget-- > 0)
+                Logging.Log("[LoRSpeedDice] stage controller not captured yet");
+            return;
+        }
+        GameEnv env(ui, faction, stage);
+        sdrules::Decide(env, [ui](const char* name, const char* suffix, float r, float g, float b) {
+            ChangeSpeedDiceColor(name, suffix, Color{ r, g, b, 1.0f }, ui);
+        });
+    }
+
+    int FindCardIndex(void* cardAry, const int* ids, int idCount) {
+        const int count = ListCount(cardAry);
+        for(int i = 0; i < count; i++) {
+            void* card = Field(ListAt(cardAry, i), kPlayingCardCard);
+            if(card == nullptr)
+                continue;
+            void* cardId = Fn<void*(void*, const void*)>(kBattleDiceCardModelGetId)(card, nullptr);
+            for(int k = 0; k < idCount; k++) {
+                if(LorIdIs(cardId, ids[k]))
+                    return i;
+            }
+        }
+        return -1;
+    }
+
+    void StyleDiceAtCard(void* unit, const int* ids, int idCount, const char* name, const char* suffix, Color color) {
+        void* cardAry = Field(Field(unit, kModelCardSlotDetail), kCardSlotDetailCardAry);
+        const int index = FindCardIndex(cardAry, ids, idCount);
+        if(index < 0)
+            return;
+        void* setter = Field(Field(unit, kModelView), kViewSpeedDiceSetter);
+        if(setter == nullptr)
+            return;
+        void* dice = Fn<void*(void*, int, const void*)>(kSpeedDiceSetterGetSpeedDiceByIndex)(setter, index, nullptr);
+        if(dice == nullptr)
+            return;
+        ChangeSpeedDiceColor(name, suffix, color, dice);
+    }
+
+    void ApplyCardPhaseStyles(void* stage) {
+        void* story = StoryTypeOf(stage);
+        if(story == nullptr)
+            return;
+
+        const bool shyao = StringEquals(story, "Shyao");
+        const bool index2 = !shyao && StringEquals(story, "TheIndex2");
+        const bool hana = !shyao && !index2 && StringEquals(story, "HanaAssociation");
+        if(!shyao && !index2 && !hana)
+            return;
+
+        void* manager = Fn<void*(const void*)>(kBattleObjectManagerGetInstance)(nullptr);
+        if(manager == nullptr)
+            return;
+        void* units = Fn<void*(void*, int, const void*)>(kBattleObjectManagerGetAliveListFaction)(manager, sdrules::kFactionEnemy, nullptr);
+        const int unitCount = ListCount(units);
+
+        if(shyao) {
+            static const int ids[] = { 610012, 610013 };
+            for(int i = 0; i < unitCount; i++) {
+                void* unit = ListAt(units, i);
+                if(unit == nullptr)
+                    continue;
+                if(!EnemyUnitIdIs(unit, 50038))
+                    continue;
+                if(Fn<bool(void*, const void*)>(kBattleUnitModelIsBreakLifeZero)(unit, nullptr))
+                    return;
+                StyleDiceAtCard(unit, ids, 2, "Xiao", "ReversedScale", Color{ 0.7f, 0.3f, 0.1f, 1.0f });
+                return;
+            }
+            return;
+        }
+
+        for(int i = 0; i < unitCount; i++) {
+            void* unit = ListAt(units, i);
+            if(unit == nullptr)
+                continue;
+            if(index2) {
+                static const int ids[] = { 605001, 605002, 605003 };
+                StyleDiceAtCard(unit, ids, 3, "Index", "ProxiesSpecial", Color{ 0.3f, 0.5f, 0.8f, 1.0f });
+            } else {
+                static const int ids[] = { 701001 };
+                StyleDiceAtCard(unit, ids, 1, "Hana", nullptr, Color{ 0.8f, 0.8f, 0.8f, 1.0f });
+            }
+        }
     }
 
     void ApplyInfinite(void* ui, int value) {
@@ -285,7 +623,7 @@ namespace {
     HOOK_DEFINE_TRAMPOLINE(SpeedDiceUiInitHook) {
         static void Callback(void* self, int index, int diceMin, int diceFace, int faction, const void* method) {
             Orig(self, index, diceMin, diceFace, faction, method);
-            ApplyDefault(self, faction);
+            ApplyDiceStyle(self, faction);
         }
     };
 
@@ -295,14 +633,39 @@ namespace {
             ApplyInfinite(self, value);
         }
     };
+
+    HOOK_DEFINE_TRAMPOLINE(StageInitCommonHook) {
+        static void Callback(void* self, void* stageInfo, bool isRebattle, const void* method) {
+            CacheStage(self);
+            Orig(self, stageInfo, isRebattle, method);
+        }
+    };
+
+    HOOK_DEFINE_TRAMPOLINE(StageStartBattleHook) {
+        static void Callback(void* self, const void* method) {
+            CacheStage(self);
+            Orig(self, method);
+        }
+    };
+
+    HOOK_DEFINE_TRAMPOLINE(StageApplyLibrarianCardPhaseHook) {
+        static void Callback(void* self, float deltaTime, const void* method) {
+            Orig(self, deltaTime, method);
+            CacheStage(self);
+            ApplyCardPhaseStyles(self);
+        }
+    };
 }
 
 extern "C" void exl_main(void* x0, void* x1) {
     (void)x0; (void)x1;
 
-    Logging.Log("[LoRSpeedDice] stage 5: full frame set");
+    Logging.Log("[LoRSpeedDice] stage 6: decision tree");
 
     exl::hook::Initialize();
+    StageInitCommonHook::InstallAtOffset(kStageControllerInitCommon);
+    StageStartBattleHook::InstallAtOffset(kStageControllerStartBattle);
+    StageApplyLibrarianCardPhaseHook::InstallAtOffset(kStageControllerApplyLibrarianCardPhase);
     SpeedDiceUiInitHook::InstallAtOffset(kSpeedDiceUiInit);
     SpeedDiceUiChangeSpriteHook::InstallAtOffset(kSpeedDiceUiChangeSprite);
 
