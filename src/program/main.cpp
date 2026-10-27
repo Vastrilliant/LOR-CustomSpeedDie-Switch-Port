@@ -48,6 +48,9 @@ namespace {
     constexpr uintptr_t kGcHandleAlloc = 0x20EDF30;
     constexpr uintptr_t kGcHandleGetTarget = 0x20EDD10;
     constexpr uintptr_t kGcHandleFree = 0x20EE000;
+    constexpr uintptr_t kObjectOpImplicit = 0x19B3DC0;
+    constexpr uintptr_t kObjectSetHideFlags = 0x19B57E0;
+    constexpr int kHideDontUnloadUnusedAsset = 0x20;
 
     constexpr uintptr_t kStageControllerInitCommon = 0x1CFAAD0;
     constexpr uintptr_t kStageControllerStartBattle = 0x1CFBF10;
@@ -157,6 +160,24 @@ namespace {
         return Fn<void*(GcHandle*, const void*)>(kGcHandleGetTarget)(&h, nullptr);
     }
 
+    bool Alive(void* obj) {
+        if(obj == nullptr)
+            return false;
+        return Fn<bool(void*, const void*)>(kObjectOpImplicit)(obj, nullptr);
+    }
+
+    void PinAsset(void* obj) {
+        if(!Alive(obj))
+            return;
+        Fn<void(void*, int, const void*)>(kObjectSetHideFlags)(obj, kHideDontUnloadUnusedAsset, nullptr);
+    }
+
+    void FreeHandle(GcHandle& h) {
+        if(h.handle != 0)
+            Fn<void(GcHandle*, const void*)>(kGcHandleFree)(&h, nullptr);
+        h.handle = 0;
+    }
+
     void* LoadBaseSprite(const char* name) {
         BaseEntry* entry = nullptr;
         for(int i = 0; i < s_BaseCount; i++) {
@@ -172,9 +193,21 @@ namespace {
             snprintf(entry->name, sizeof(entry->name), "%s", name);
             entry->tried = false;
             entry->ok = false;
+            entry->handle.handle = 0;
         }
-        if(entry->tried)
-            return entry->ok ? Deref(entry->handle) : nullptr;
+        if(entry->tried) {
+            if(!entry->ok)
+                return nullptr;
+            void* cached = Deref(entry->handle);
+            if(Alive(cached))
+                return cached;
+
+            if(s_LogBudget-- > 0)
+                Logging.Log("[LoRSpeedDice] stale base sprite, reloading: %s", name);
+            FreeHandle(entry->handle);
+            entry->ok = false;
+            entry->tried = false;
+        }
 
         entry->tried = true;
 
@@ -203,6 +236,9 @@ namespace {
             return nullptr;
         }
 
+        PinAsset(sprite);
+        PinAsset(Fn<void*(void*, const void*)>(kSpriteGetTexture)(sprite, nullptr));
+
         entry->handle = Fn<GcHandle(void*, const void*)>(kGcHandleAlloc)(sprite, nullptr);
         entry->ok = true;
         if(s_LogBudget-- > 0)
@@ -216,16 +252,24 @@ namespace {
 
         const float ppu = Fn<float(void*, const void*)>(kImageGetPixelsPerUnit)(image, nullptr);
 
+        int reuseSlot = -1;
         for(int i = 0; i < s_ScaledCount; i++) {
-            if(s_Scaled[i].ppu == ppu && strcmp(s_Scaled[i].name, name) == 0)
-                return Deref(s_Scaled[i].handle);
+            if(s_Scaled[i].ppu == ppu && strcmp(s_Scaled[i].name, name) == 0) {
+                void* cached = Deref(s_Scaled[i].handle);
+                if(Alive(cached) && Alive(Fn<void*(void*, const void*)>(kSpriteGetTexture)(cached, nullptr)))
+                    return cached;
+
+                FreeHandle(s_Scaled[i].handle);
+                reuseSlot = i;
+                break;
+            }
         }
 
         void* baseSprite = LoadBaseSprite(name);
         if(baseSprite == nullptr)
             return nullptr;
         void* texture = Fn<void*(void*, const void*)>(kSpriteGetTexture)(baseSprite, nullptr);
-        if(texture == nullptr)
+        if(!Alive(texture))
             return nullptr;
 
         const int w = Fn<int(void*, const void*)>(kTextureGetWidth)(texture, nullptr);
@@ -236,12 +280,17 @@ namespace {
         void* sprite = Fn<void*(void*, Rect, Vector2, float, uint32_t, int, const void*)>(kSpriteCreate)(texture, rect, pivot, ppu, 0, 0, nullptr);
         if(sprite == nullptr)
             return nullptr;
+        PinAsset(sprite);
 
-        if(s_ScaledCount < kMaxScaled) {
-            ScaledEntry& e = s_Scaled[s_ScaledCount++];
-            snprintf(e.name, sizeof(e.name), "%s", name);
-            e.ppu = ppu;
-            e.handle = Fn<GcHandle(void*, const void*)>(kGcHandleAlloc)(sprite, nullptr);
+        ScaledEntry* e = nullptr;
+        if(reuseSlot >= 0)
+            e = &s_Scaled[reuseSlot];
+        else if(s_ScaledCount < kMaxScaled)
+            e = &s_Scaled[s_ScaledCount++];
+        if(e != nullptr) {
+            snprintf(e->name, sizeof(e->name), "%s", name);
+            e->ppu = ppu;
+            e->handle = Fn<GcHandle(void*, const void*)>(kGcHandleAlloc)(sprite, nullptr);
         }
         return sprite;
     }
