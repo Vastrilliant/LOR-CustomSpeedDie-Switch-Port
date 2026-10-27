@@ -1,16 +1,20 @@
 name: build-plugin
 on: [workflow_dispatch, push]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Tools
         run: |
           apt-get update
           apt-get install -y git cmake ninja-build make python3 python3-pip
           pip3 install --break-system-packages keystone-engine lz4 || pip3 install keystone-engine lz4
+
       - name: Fetch exlaunch
         run: |
           git clone --depth 1 https://github.com/shadowninja108/exlaunch.git
@@ -19,17 +23,25 @@ jobs:
           test -n "$TARGET"
           echo "TARGET=$TARGET" >> "$GITHUB_ENV"
           grep -rIl "PROGRAM_ID" exlaunch --exclude-dir=.git | head -20 | xargs -r sed -i -E 's/(PROGRAM_ID[ :=]+"?)0x[0-9A-Fa-f]+/\10x0100E7A019246000/'
+
       - name: Apply fixes
         run: |
           test -d patch/source
           cp -rv patch/source/. exlaunch/source/
-          cp -v src/program/main.cpp "$TARGET"
+
+          TARGET="${TARGET:-$(find exlaunch -path '*program/main.cpp' | head -n1)}"
+          test -n "$TARGET"
+
+          # Copy all custom program sources into the same directory as the upstream main.cpp
+          cp -rv src/program/. "$(dirname "$TARGET")/"
+
       - name: Build
         run: |
           set -x
           CM=$(find exlaunch -name CMakeLists.txt -not -path '*/.git/*' | awk '{print length, $0}' | sort -n | head -n1 | cut -d' ' -f2-)
           find exlaunch -name 'subsdk*' -type f -delete
           rm -rf exlaunch/build
+
           if [ -n "$CM" ]; then
             ROOT=$(dirname "$CM")
             ( cd "$ROOT"
@@ -42,13 +54,16 @@ jobs:
           else
             echo "No CMakeLists.txt or Makefile found"; exit 1
           fi
+
           mkdir -p out
           find exlaunch -name 'subsdk9' -type f -exec cp -v {} out/subsdk9 \;
           ls -laR out
+
       - uses: actions/upload-artifact@v4
         with:
           name: subsdk9
           path: out/**
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
