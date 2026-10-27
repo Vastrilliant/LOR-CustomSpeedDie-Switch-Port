@@ -13,6 +13,17 @@ namespace exl::util {
         return i < n ? p[i] : 0;
     }
 
+    static bool AliasWritesThrough(uintptr_t ro, uintptr_t rw) {
+        volatile u8* w = reinterpret_cast<volatile u8*>(rw);
+        const volatile u8* r = reinterpret_cast<const volatile u8*>(ro);
+        const u8 orig = *w;
+        const u8 flipped = static_cast<u8>(orig ^ 0xFF);
+        *w = flipped;
+        const bool ok = (*r == flipped);
+        *w = orig;
+        return ok;
+    }
+
     template<typename Callback>
     static void ForEachMemRange(Callback callback, uintptr_t start_address, size_t length) {
         const uintptr_t end = start_address + length;
@@ -89,7 +100,8 @@ namespace exl::util {
             Logging.Log(EXL_LOG_PREFIX "rw bytes: %02x %02x %02x %02x %02x %02x %02x %02x",
                 ByteAt(rwBytes, first, size), ByteAt(rwBytes, first+1, size), ByteAt(rwBytes, first+2, size), ByteAt(rwBytes, first+3, size), ByteAt(rwBytes, first+4, size), ByteAt(rwBytes, first+5, size), ByteAt(rwBytes, first+6, size), ByteAt(rwBytes, first+7, size));
         }
-        if(!same) {
+        const bool writesThrough = same && AliasWritesThrough(claim.m_Ro, claim.m_Rw);
+        if(!same || !writesThrough) {
             ForEachMemRange(
                 [alignedRw, procHandle](uintptr_t address, uintptr_t size, uintptr_t offset) {
                     void* rw = (void*) (alignedRw + offset);
